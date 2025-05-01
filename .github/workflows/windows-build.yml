@@ -33,7 +33,7 @@ jobs:
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico bpm_changer.py
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            pyinstaller --onefile --windowed --name=bpm_changer_mac bpm_changer.py
+            pyinstaller --windowed --onedir --name=bpm_changer_mac --osx-bundle-identifier=com.captain.bpmchanger --plist=assets/mac/Info.plist bpm_changer.py
           else
             pyinstaller --onefile --name=bpm_changer_linux bpm_changer.py
           fi
@@ -43,7 +43,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/bpm_changer*
+            dist/**
           tag_name: bpm-changer-${{ github.run_number }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
