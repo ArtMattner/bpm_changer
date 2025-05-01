@@ -3,9 +3,15 @@ name: Build Windows EXE
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Check out code
@@ -22,14 +28,22 @@ jobs:
           pip install pyinstaller
           pip install -r requirements.txt
 
-      - name: Build EXE with PyInstaller
+      - name: Build binary with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico bpm_changer.py
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico bpm_changer.py
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            pyinstaller --onefile --windowed --name=bpm_changer_mac bpm_changer.py
+          else
+            pyinstaller --onefile --name=bpm_changer_linux bpm_changer.py
+          fi
+        shell: bash
 
       - name: Create release (optional)
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/bpm_changer.exe
+          files: |
+            dist/bpm_changer*
           tag_name: bpm-changer-${{ github.run_number }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
