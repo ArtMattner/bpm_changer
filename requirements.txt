@@ -1,0 +1,6 @@
+librosa
+pydub
+numpy
+soundfile
+tk
+pillow
