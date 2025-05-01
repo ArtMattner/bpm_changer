@@ -3,3 +3,32 @@
 /01 - AROUND THE WORLD (RADIO EDIT)_140bpm.mp3
 /Backstreet Boys - As Long As You Love Me.mp3
 /Backstreet Boys - As Long As You Love Me_120bpm.mp3
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+bpm_env/
+env/
+venv/
+
+# macOS
+.DS_Store
+
+# PyInstaller build folders
+build/
+dist/
+*.spec
+
+# VSCode
+.vscode/
+
+# Logs / misc
+*.log
+*.tmp
+*.bak
+
+# Python egg info
+*.egg-info/
