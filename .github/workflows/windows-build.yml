@@ -1,9 +1,9 @@
 name: Build Windows EXE
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
-  workflow_dispatch:
 
 jobs:
   build:
@@ -27,9 +27,3 @@ jobs:
       - name: Build EXE with PyInstaller
         run: |
           pyinstaller --onefile --windowed --icon=icon.ico bpm_changer.py
-
-      - name: Upload EXE artifact
-        uses: actions/upload-artifact@v2.3.1
-        with:
-          name: bpm_changer-exe
-          path: dist/bpm_changer.exe
