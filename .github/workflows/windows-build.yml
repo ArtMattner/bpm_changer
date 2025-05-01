@@ -44,6 +44,6 @@ jobs:
         with:
           files: |
             dist/**
-          tag_name: bpm-changer-${{ github.run_number }}
+          tag_name: bpm-changer-${{ github.run_id }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
