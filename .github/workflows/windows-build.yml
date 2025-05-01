@@ -27,3 +27,9 @@ jobs:
       - name: Build EXE with PyInstaller
         run: |
           pyinstaller --onefile --windowed --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico bpm_changer.py
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: bpm_changer-exe
+          path: dist/bpm_changer.exe
