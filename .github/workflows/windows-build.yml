@@ -26,4 +26,4 @@ jobs:
 
       - name: Build EXE with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --icon=icon.ico bpm_changer.py
+          pyinstaller --onefile --windowed --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico bpm_changer.py
