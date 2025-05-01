@@ -44,6 +44,10 @@ jobs:
               ;;
             "macOS")
               brew install ffmpeg
+              if [ ! -d assets ]; then
+                echo "WARNING: 'assets' directory not found, creating empty fallback..."
+                mkdir assets
+              fi
               pyinstaller --windowed --onedir --name=bpm_changer_mac --osx-bundle-identifier=com.captain.bpmchanger --add-data "assets:assets" bpm_changer.py
               ;;
           esac
