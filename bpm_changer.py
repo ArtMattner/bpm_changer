@@ -13,13 +13,6 @@ import shutil
 import sys
 
 def change_bpm(input_path, output_path, target_bpm, progress_callback=None):
-    ffprobe_path = shutil.which("ffprobe")
-    if ffprobe_path is None:
-        if hasattr(sys, "_MEIPASS"):
-            ffprobe_path = os.path.join(sys._MEIPASS, "ffprobe")
-            os.environ["PATH"] += os.pathsep + sys._MEIPASS
-        if not os.path.isfile(ffprobe_path):
-            raise FileNotFoundError("ffprobe nicht gefunden. Bitte stelle sicher, dass ffmpeg/ffprobe installiert oder im Bundle enthalten ist.")
 
     audio = AudioSegment.from_file(input_path)
     sr = audio.frame_rate
@@ -77,7 +70,10 @@ class BPMChangerApp:
     def __init__(self, master):
         self.master = master
         self.master.configure(bg='black')
-        self.bg_image_path = os.path.join(os.path.dirname(__file__), "A_vibrant_digital_illustration_in_a_futuristic_spa.png")
+        if hasattr(sys, "_MEIPASS"):
+            self.bg_image_path = os.path.join(sys._MEIPASS, "assets", "A_vibrant_digital_illustration_in_a_futuristic_spa.png")
+        else:
+            self.bg_image_path = os.path.join(os.path.dirname(__file__), "assets", "A_vibrant_digital_illustration_in_a_futuristic_spa.png")
         try:
             self.original_bg_image = Image.open(self.bg_image_path)
             original_width, original_height = self.original_bg_image.size
@@ -149,14 +145,6 @@ class BPMChangerApp:
             self.save_dir.set(folder)
 
     def select_file(self):
-        ffprobe_path = shutil.which("ffprobe")
-        if ffprobe_path is None:
-            if hasattr(sys, "_MEIPASS"):
-                ffprobe_path = os.path.join(sys._MEIPASS, "ffprobe")
-                os.environ["PATH"] += os.pathsep + sys._MEIPASS
-            if not os.path.isfile(ffprobe_path):
-                messagebox.showerror("Fehler", "ffprobe nicht gefunden. Bitte stelle sicher, dass ffmpeg/ffprobe installiert oder im Bundle enthalten ist.")
-                return
 
         self.file_path = filedialog.askopenfilename(filetypes=[("MP3 Dateien", "*.mp3")])
         if self.file_path:
