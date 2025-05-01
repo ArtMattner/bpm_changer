@@ -40,7 +40,12 @@ jobs:
                 echo "WARNING: 'assets' directory not found, creating empty fallback..."
                 mkdir assets
               fi
-              pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." --add-data "assets\\bg.jpg;assets/bg.jpg" bpm_changer.py
+              if [ ! -f assets/bg.jpg ]; then
+                echo "Missing 'bg.jpg' in 'assets'. Downloading placeholder..."
+                mkdir -p assets
+                curl -L -o assets/bg.jpg https://via.placeholder.com/800x600.jpg
+              fi
+              pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." --add-data "assets/bg.jpg;assets" bpm_changer.py
               ;;
             "macOS")
               brew install ffmpeg
