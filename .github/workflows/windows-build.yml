@@ -31,11 +31,21 @@ jobs:
       - name: Build binary with PyInstaller
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico bpm_changer.py
+            # Download ffmpeg static binaries
+            curl -L -o ffmpeg.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+            unzip ffmpeg.zip -d ffmpeg
+            cp ffmpeg/ffmpeg-*-essentials_build/bin/ffmpeg.exe .
+            cp ffmpeg/ffmpeg-*-essentials_build/bin/ffprobe.exe .
+            pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." bpm_changer.py
+
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            pyinstaller --windowed --onedir --name=bpm_changer_mac --osx-bundle-identifier=com.captain.bpmchanger bpm_changer.py && ls dist
+            brew install ffmpeg
+            pyinstaller --windowed --onedir --name=bpm_changer_mac --osx-bundle-identifier=com.captain.bpmchanger --add-binary "/opt/homebrew/bin/ffmpeg:." --add-binary "/opt/homebrew/bin/ffprobe:." bpm_changer.py && ls dist
+
           else
-            pyinstaller --onefile --name=bpm_changer_linux bpm_changer.py
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+            pyinstaller --onefile --name=bpm_changer_linux --add-binary "/usr/bin/ffmpeg:." --add-binary "/usr/bin/ffprobe:." bpm_changer.py
           fi
         shell: bash
 
