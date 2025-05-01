@@ -10,7 +10,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -42,11 +42,6 @@ jobs:
               brew install ffmpeg
               pyinstaller --windowed --onedir --name=bpm_changer_mac --osx-bundle-identifier=com.captain.bpmchanger --add-data "assets:assets" bpm_changer.py
               ;;
-            "Linux")
-              sudo apt-get update
-              sudo apt-get install -y ffmpeg
-              pyinstaller --onefile --name=bpm_changer_linux --add-data "assets:assets" bpm_changer.py
-              ;;
           esac
         shell: bash
 
@@ -68,15 +63,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: bpm_changer_mac.zip
-          tag_name: bpm-changer-${{ github.run_id }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Linux binary
-        if: matrix.os == 'ubuntu-latest'
-        uses: softprops/action-gh-release@v1
-        with:
-          files: dist/bpm_changer_linux
           tag_name: bpm-changer-${{ github.run_id }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
