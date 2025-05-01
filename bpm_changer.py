@@ -9,8 +9,18 @@ import time
 from tempfile import NamedTemporaryFile
 import numpy as np
 from PIL import Image, ImageTk
+import shutil
+import sys
 
 def change_bpm(input_path, output_path, target_bpm, progress_callback=None):
+    ffprobe_path = shutil.which("ffprobe")
+    if ffprobe_path is None:
+        if hasattr(sys, "_MEIPASS"):
+            ffprobe_path = os.path.join(sys._MEIPASS, "ffprobe")
+            os.environ["PATH"] += os.pathsep + sys._MEIPASS
+        if not os.path.isfile(ffprobe_path):
+            raise FileNotFoundError("ffprobe nicht gefunden. Bitte stelle sicher, dass ffmpeg/ffprobe installiert oder im Bundle enthalten ist.")
+
     audio = AudioSegment.from_file(input_path)
     sr = audio.frame_rate
     samples = np.frombuffer(audio.raw_data, dtype=np.int16).astype(np.float32)
@@ -139,6 +149,15 @@ class BPMChangerApp:
             self.save_dir.set(folder)
 
     def select_file(self):
+        ffprobe_path = shutil.which("ffprobe")
+        if ffprobe_path is None:
+            if hasattr(sys, "_MEIPASS"):
+                ffprobe_path = os.path.join(sys._MEIPASS, "ffprobe")
+                os.environ["PATH"] += os.pathsep + sys._MEIPASS
+            if not os.path.isfile(ffprobe_path):
+                messagebox.showerror("Fehler", "ffprobe nicht gefunden. Bitte stelle sicher, dass ffmpeg/ffprobe installiert oder im Bundle enthalten ist.")
+                return
+
         self.file_path = filedialog.askopenfilename(filetypes=[("MP3 Dateien", "*.mp3")])
         if self.file_path:
             self.filename_label.config(text=os.path.basename(self.file_path))

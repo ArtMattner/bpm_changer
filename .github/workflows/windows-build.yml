@@ -36,7 +36,7 @@ jobs:
             unzip ffmpeg.zip -d ffmpeg
             cp ffmpeg/ffmpeg-*-essentials_build/bin/ffmpeg.exe .
             cp ffmpeg/ffmpeg-*-essentials_build/bin/ffprobe.exe .
-            pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." bpm_changer.py
+            pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico --add-binary "ffmpeg.exe;ffmpeg.exe" --add-binary "ffprobe.exe;ffprobe.exe" --add-data "assets;assets" bpm_changer.py
 
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
             brew install ffmpeg
