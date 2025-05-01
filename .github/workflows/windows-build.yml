@@ -36,6 +36,10 @@ jobs:
               unzip ffmpeg.zip -d ffmpeg
               cp ffmpeg/ffmpeg-*-essentials_build/bin/ffmpeg.exe .
               cp ffmpeg/ffmpeg-*-essentials_build/bin/ffprobe.exe .
+              if not exist assets (
+                echo "WARNING: 'assets' directory not found, creating empty fallback..."
+                mkdir assets
+              )
               pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." --add-data "assets;assets" bpm_changer.py
               ;;
             "macOS")
