@@ -39,11 +39,33 @@ jobs:
           fi
         shell: bash
 
-      - name: Create release (optional)
+      - name: Create and upload release (Windows)
+        if: matrix.os == 'windows-latest'
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            dist/**
+          files: dist/bpm_changer_win.exe
+          tag_name: bpm-changer-${{ github.run_id }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Zip macOS app
+        if: matrix.os == 'macos-latest'
+        run: zip -r bpm_changer_mac.zip dist/bpm_changer_mac/bpm_changer_mac.app
+
+      - name: Upload macOS release
+        if: matrix.os == 'macos-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: bpm_changer_mac.zip
+          tag_name: bpm-changer-${{ github.run_id }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux binary
+        if: matrix.os == 'ubuntu-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/bpm_changer_linux
           tag_name: bpm-changer-${{ github.run_id }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
