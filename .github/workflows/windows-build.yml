@@ -37,7 +37,7 @@ jobs:
           cp ffmpeg/ffmpeg-*-essentials_build/bin/ffprobe.exe .
           test -f bpm_changer.py || { echo "Missing bpm_changer.py"; exit 1; }
           test -f ./assets/A_vibrant_digital_illustration_in_a_futuristic_spa.png || { echo "Missing background image!"; exit 1; }
-          pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." --add-data "./assets/A_vibrant_digital_illustration_in_a_futuristic_spa.png;assets" bpm_changer.py
+          pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." --add-data "assets/A_vibrant_digital_illustration_in_a_futuristic_spa.png;assets" bpm_changer.py
         shell: bash
 
       - name: Build binary with PyInstaller (macOS)
@@ -45,7 +45,7 @@ jobs:
         run: |
           brew install ffmpeg
           test -f bpm_changer.py || { echo "Missing bpm_changer.py"; exit 1; }
-          pyinstaller --onefile --windowed --name=bpm_changer_mac --osx-bundle-identifier=com.captain.bpmchanger --add-data "./assets/A_vibrant_digital_illustration_in_a_futuristic_spa.png:assets" bpm_changer.py
+          pyinstaller --onefile --windowed --name=bpm_changer_mac --osx-bundle-identifier=com.captain.bpmchanger --add-data "assets/A_vibrant_digital_illustration_in_a_futuristic_spa.png:assets" bpm_changer.py
         shell: bash
 
       - name: Create and upload release (Windows)
