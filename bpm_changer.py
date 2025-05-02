@@ -12,6 +12,16 @@ from PIL import Image, ImageTk
 import shutil
 import sys
 
+# Prüfe ffmpeg/ffprobe-Abhängigkeiten
+def check_ffmpeg_dependencies():
+    ffmpeg_found = shutil.which("ffmpeg") is not None
+    ffprobe_found = shutil.which("ffprobe") is not None
+    if not ffmpeg_found or not ffprobe_found:
+        message = "Fehler: ffmpeg und/oder ffprobe sind nicht installiert oder nicht im PATH verfügbar.\n\n"
+        message += "Bitte installiere ffmpeg und stelle sicher, dass die Befehle 'ffmpeg' und 'ffprobe' im Systempfad verfügbar sind."
+        messagebox.showerror("Abhängigkeit fehlt", message)
+        sys.exit(1)
+
 
 # Logging function for environment info
 def log_environment_info():
@@ -21,21 +31,9 @@ def log_environment_info():
             f.write(f"Executable path: {sys.executable}\n")
             f.write(f"__file__: {__file__}\n")
             f.write(f"Current working directory: {os.getcwd()}\n")
-            f.write(f"FFMPEG_PATH: {FFMPEG_PATH}\n")
-            f.write(f"FFPROBE_PATH: {FFPROBE_PATH}\n")
             f.write(f"sys._MEIPASS: {getattr(sys, '_MEIPASS', 'Not set')}\n")
     except Exception as e:
         print(f"Fehler beim Schreiben des Logs: {e}")
-
-def get_binary(name):
-    if hasattr(sys, "_MEIPASS"):
-        path = os.path.join(sys._MEIPASS, name + (".exe" if os.name == "nt" else ""))
-        if os.path.exists(path):
-            return path
-    return shutil.which(name) or name
-
-FFMPEG_PATH = get_binary("ffmpeg")
-FFPROBE_PATH = get_binary("ffprobe")
 
 def change_bpm(input_path, output_path, target_bpm, progress_callback=None):
 
@@ -195,7 +193,7 @@ class BPMChangerApp:
             except Exception as e:
                 self.fileinfo_label.config(text="Fehler beim BPM-Auslesen!", fg="red")
                 self.status_label.config(text="Status: Fehler beim Erkennen", fg="red")
-                messagebox.showerror("Fehler", f"BPM konnte nicht erkannt werden:\n{str(e)}\n\nFFPROBE: {FFPROBE_PATH}")
+                messagebox.showerror("Fehler", f"BPM konnte nicht erkannt werden:\n{str(e)}")
 
     def run_conversion(self):
         if not self.file_path:
@@ -234,7 +232,7 @@ class BPMChangerApp:
                 messagebox.showinfo("Fertig", f"Original BPM: {original_bpm:.2f}\nGröße: {output_size:.2f} MB\nGespeichert als:\n{output_path}")
             except Exception as e:
                 self.status_label.config(text="Fehler beim Verarbeiten!", fg="red")
-                messagebox.showerror("Fehler", f"{str(e)}\n\nFFMPEG: {FFMPEG_PATH}")
+                messagebox.showerror("Fehler", f"{str(e)}")
 
         threading.Thread(target=task).start()
 
@@ -246,6 +244,7 @@ class BPMChangerApp:
     # Die Methode resize_background wird nicht mehr benötigt und entfernt.
 
 if __name__ == "__main__":
+    check_ffmpeg_dependencies()
     log_environment_info()
     root = tk.Tk()
     app = BPMChangerApp(root)

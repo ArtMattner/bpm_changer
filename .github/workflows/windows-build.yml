@@ -8,10 +8,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
 
     steps:
       - name: Check out code
@@ -29,44 +26,16 @@ jobs:
           pip install -r requirements.txt
 
       - name: Build binary with PyInstaller (Windows)
-        if: runner.os == 'Windows'
         run: |
-          curl -L -o ffmpeg.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
-          unzip -o ffmpeg.zip -d ffmpeg || { echo "Unzip failed"; exit 1; }
-          cp ffmpeg/ffmpeg-*-essentials_build/bin/ffmpeg.exe .
-          cp ffmpeg/ffmpeg-*-essentials_build/bin/ffprobe.exe .
           test -f bpm_changer.py || { echo "Missing bpm_changer.py"; exit 1; }
           test -f ./assets/A_vibrant_digital_illustration_in_a_futuristic_spa.png || { echo "Missing background image!"; exit 1; }
-          pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." --add-data "assets/A_vibrant_digital_illustration_in_a_futuristic_spa.png;assets" bpm_changer.py
-        shell: bash
-
-      - name: Build binary with PyInstaller (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install ffmpeg
-          test -f bpm_changer.py || { echo "Missing bpm_changer.py"; exit 1; }
-          test -f ./assets/A_vibrant_digital_illustration_in_a_futuristic_spa.png || { echo "Missing background image!"; exit 1; }
-          pyinstaller --onefile --windowed --name=bpm_changer_mac --osx-bundle-identifier=com.captain.bpmchanger --add-data "assets/A_vibrant_digital_illustration_in_a_futuristic_spa.png:assets" bpm_changer.py
+          pyinstaller --onefile --windowed --name=bpm_changer_win --icon=A_vibrant_digital_illustration_in_a_futuristic_spa.ico --add-data "assets/A_vibrant_digital_illustration_in_a_futuristic_spa.png;assets" bpm_changer.py
         shell: bash
 
       - name: Create and upload release (Windows)
-        if: matrix.os == 'windows-latest'
         uses: softprops/action-gh-release@v1
         with:
           files: dist/bpm_changer_win.exe
-          tag_name: bpm-changer-${{ github.run_id }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Zip macOS app
-        if: matrix.os == 'macos-latest'
-        run: zip -r bpm_changer_mac.zip dist/bpm_changer_mac.app
-
-      - name: Upload macOS release
-        if: matrix.os == 'macos-latest'
-        uses: softprops/action-gh-release@v1
-        with:
-          files: bpm_changer_mac.zip
           tag_name: bpm-changer-${{ github.run_id }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
