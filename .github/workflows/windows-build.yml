@@ -1,6 +1,9 @@
 name: Build Windows EXE
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -36,6 +39,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: dist/bpm_changer_win.exe
-          tag_name: bpm-changer-${{ github.run_id }}
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
