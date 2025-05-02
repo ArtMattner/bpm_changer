@@ -12,6 +12,11 @@ from PIL import Image, ImageTk
 import shutil
 import sys
 
+def get_binary(name):
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, name + (".exe" if os.name == "nt" else ""))
+    return name
+
 def change_bpm(input_path, output_path, target_bpm, progress_callback=None):
 
     audio = AudioSegment.from_file(input_path)
@@ -157,18 +162,20 @@ class BPMChangerApp:
                     samples = samples.reshape((-1, 2))
                     samples = samples.mean(axis=1)
                 y = samples / 32768.0
-                if len(y) < 2048:
-                    raise ValueError("Fehlerhafte oder zu kurze Audiodatei.")
+                if y is None or len(y) < 2048:
+                    raise ValueError("Audio zu kurz oder leer.")
                 bpm, _ = librosa.beat.beat_track(y=y, sr=sr)
                 bpm = float(bpm.item() if hasattr(bpm, "item") else bpm)
                 size = os.path.getsize(self.file_path) / (1024 * 1024)
                 self.fileinfo_label.config(text=f"BPM: {bpm:.2f}, Größe: {size:.2f} MB")
+                self.status_label.config(text="Status: BPM erkannt", fg="green")
                 if not self.filename_override.get().strip():
                     default_name = os.path.splitext(os.path.basename(self.file_path))[0] + "_BPM-CHANGER"
                     self.filename_override.set(default_name)
             except Exception as e:
                 self.fileinfo_label.config(text="Fehler beim BPM-Auslesen!", fg="red")
-                messagebox.showerror("Fehler", f"BPM konnte nicht erkannt werden:\n{e}")
+                self.status_label.config(text="Status: Fehler beim Erkennen", fg="red")
+                messagebox.showerror("Fehler", f"BPM konnte nicht erkannt werden:\n{str(e)}")
 
     def run_conversion(self):
         if not self.file_path:
