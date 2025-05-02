@@ -14,8 +14,13 @@ import sys
 
 def get_binary(name):
     if hasattr(sys, "_MEIPASS"):
-        return os.path.join(sys._MEIPASS, name + (".exe" if os.name == "nt" else ""))
-    return name
+        path = os.path.join(sys._MEIPASS, name + (".exe" if os.name == "nt" else ""))
+        if os.path.exists(path):
+            return path
+    return shutil.which(name) or name
+
+FFMPEG_PATH = get_binary("ffmpeg")
+FFPROBE_PATH = get_binary("ffprobe")
 
 def change_bpm(input_path, output_path, target_bpm, progress_callback=None):
 
@@ -175,7 +180,7 @@ class BPMChangerApp:
             except Exception as e:
                 self.fileinfo_label.config(text="Fehler beim BPM-Auslesen!", fg="red")
                 self.status_label.config(text="Status: Fehler beim Erkennen", fg="red")
-                messagebox.showerror("Fehler", f"BPM konnte nicht erkannt werden:\n{str(e)}")
+                messagebox.showerror("Fehler", f"BPM konnte nicht erkannt werden:\n{str(e)}\n\nFFPROBE: {FFPROBE_PATH}")
 
     def run_conversion(self):
         if not self.file_path:
@@ -214,7 +219,7 @@ class BPMChangerApp:
                 messagebox.showinfo("Fertig", f"Original BPM: {original_bpm:.2f}\nGröße: {output_size:.2f} MB\nGespeichert als:\n{output_path}")
             except Exception as e:
                 self.status_label.config(text="Fehler beim Verarbeiten!", fg="red")
-                messagebox.showerror("Fehler", str(e))
+                messagebox.showerror("Fehler", f"{str(e)}\n\nFFMPEG: {FFMPEG_PATH}")
 
         threading.Thread(target=task).start()
 
