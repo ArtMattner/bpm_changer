@@ -12,6 +12,21 @@ from PIL import Image, ImageTk
 import shutil
 import sys
 
+
+# Logging function for environment info
+def log_environment_info():
+    try:
+        log_path = os.path.join(os.getcwd(), "bpm_changer_log.txt")
+        with open(log_path, "w") as f:
+            f.write(f"Executable path: {sys.executable}\n")
+            f.write(f"__file__: {__file__}\n")
+            f.write(f"Current working directory: {os.getcwd()}\n")
+            f.write(f"FFMPEG_PATH: {FFMPEG_PATH}\n")
+            f.write(f"FFPROBE_PATH: {FFPROBE_PATH}\n")
+            f.write(f"sys._MEIPASS: {getattr(sys, '_MEIPASS', 'Not set')}\n")
+    except Exception as e:
+        print(f"Fehler beim Schreiben des Logs: {e}")
+
 def get_binary(name):
     if hasattr(sys, "_MEIPASS"):
         path = os.path.join(sys._MEIPASS, name + (".exe" if os.name == "nt" else ""))
@@ -231,6 +246,7 @@ class BPMChangerApp:
     # Die Methode resize_background wird nicht mehr benötigt und entfernt.
 
 if __name__ == "__main__":
+    log_environment_info()
     root = tk.Tk()
     app = BPMChangerApp(root)
     root.mainloop()
