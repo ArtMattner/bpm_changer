@@ -11,14 +11,34 @@ import numpy as np
 from PIL import Image, ImageTk
 import shutil
 import sys
+import platform
 
 # Prüfe ffmpeg/ffprobe-Abhängigkeiten
 def check_ffmpeg_dependencies():
-    ffmpeg_found = shutil.which("ffmpeg") is not None
-    ffprobe_found = shutil.which("ffprobe") is not None
-    if not ffmpeg_found or not ffprobe_found:
-        message = "Fehler: ffmpeg und/oder ffprobe sind nicht installiert oder nicht im PATH verfügbar.\n\n"
-        message += "Bitte installiere ffmpeg und stelle sicher, dass die Befehle 'ffmpeg' und 'ffprobe' im Systempfad verfügbar sind."
+    system = platform.system()
+    if system == "Windows":
+        ffmpeg_exe = "ffmpeg.exe"
+        ffprobe_exe = "ffprobe.exe"
+    else:
+        ffmpeg_exe = "ffmpeg"
+        ffprobe_exe = "ffprobe"
+
+    ffmpeg_path = shutil.which(ffmpeg_exe)
+    ffprobe_path = shutil.which(ffprobe_exe)
+
+    log_path = os.path.join(os.getcwd(), "bpm_changer_log.txt")
+    try:
+        with open(log_path, "a") as f:
+            f.write(f"ffmpeg path: {ffmpeg_path}\n")
+            f.write(f"ffprobe path: {ffprobe_path}\n")
+    except Exception as e:
+        print(f"Fehler beim Schreiben des Logs: {e}")
+
+    if not ffmpeg_path or not ffprobe_path:
+        message = (
+            f"Fehler: {ffmpeg_exe} und/oder {ffprobe_exe} sind nicht installiert oder nicht im PATH verfügbar.\n\n"
+            "Bitte installiere ffmpeg und stelle sicher, dass die Befehle im Systempfad verfügbar sind."
+        )
         messagebox.showerror("Abhängigkeit fehlt", message)
         sys.exit(1)
 
@@ -93,10 +113,9 @@ class BPMChangerApp:
     def __init__(self, master):
         self.master = master
         self.master.configure(bg='black')
-        if hasattr(sys, "_MEIPASS"):
-            self.bg_image_path = os.path.join(sys._MEIPASS, "assets", "A_vibrant_digital_illustration_in_a_futuristic_spa.png")
-        else:
-            self.bg_image_path = os.path.join(os.path.dirname(__file__), "assets", "A_vibrant_digital_illustration_in_a_futuristic_spa.png")
+        # Load background image relative to script location, works on Windows and others
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.bg_image_path = os.path.join(base_dir, "assets", "A_vibrant_digital_illustration_in_a_futuristic_spa.png")
         try:
             self.original_bg_image = Image.open(self.bg_image_path)
             original_width, original_height = self.original_bg_image.size
@@ -241,7 +260,6 @@ class BPMChangerApp:
         self.percent_label.config(text=f"{int(percent)}%")
         self.master.update_idletasks()
         
-    # Die Methode resize_background wird nicht mehr benötigt und entfernt.
 
 if __name__ == "__main__":
     check_ffmpeg_dependencies()
