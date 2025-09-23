@@ -1,17 +1,23 @@
 import librosa
-import soundfile as sf
-from pydub import AudioSegment
+from pydub import AudioSegment, effects
+import noisereduce as nr
+from scipy import signal
 import os
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import time
-from tempfile import NamedTemporaryFile
 import numpy as np
 from PIL import Image, ImageTk
 import shutil
 import sys
 import platform
+
+EXPORT_FORMATS = {
+    "MP3 (320 kbit/s)": {"format": "mp3", "extension": ".mp3"},
+    "WAV (verlustfrei)": {"format": "wav", "extension": ".wav"},
+    "FLAC (verlustfrei)": {"format": "flac", "extension": ".flac"},
+}
 
 # Prüfe ffmpeg/ffprobe-Abhängigkeiten
 def check_ffmpeg_dependencies():
@@ -55,42 +61,123 @@ def log_environment_info():
     except Exception as e:
         print(f"Fehler beim Schreiben des Logs: {e}")
 
-def change_bpm(input_path, output_path, target_bpm, progress_callback=None):
+def apply_tone_controls(audio_array, sr, bass_db=0.0, treble_db=0.0):
+    """Apply gentle bass/treble adjustments in-place on a copy of the audio data."""
+    if (abs(bass_db) < 1e-3) and (abs(treble_db) < 1e-3):
+        return audio_array
+
+    def _apply_shelves(channel_data: np.ndarray) -> np.ndarray:
+        processed = channel_data
+        if abs(bass_db) >= 1e-3:
+            cutoff = max(40.0, min(400.0, 200.0))
+            wn = min(0.99, cutoff / (sr / 2.0))
+            b, a = signal.iirfilter(2, wn, btype="low", ftype="butter")
+            low_component = signal.lfilter(b, a, processed)
+            bass_gain = 10 ** (bass_db / 20.0)
+            processed = processed + (bass_gain - 1.0) * low_component
+        if abs(treble_db) >= 1e-3:
+            cutoff = min(sr / 2.0 - 100.0, 4000.0)
+            if cutoff <= 0:
+                return processed
+            wn = max(0.01, cutoff / (sr / 2.0))
+            b, a = signal.iirfilter(2, wn, btype="high", ftype="butter")
+            high_component = signal.lfilter(b, a, processed)
+            treble_gain = 10 ** (treble_db / 20.0)
+            processed = processed + (treble_gain - 1.0) * high_component
+        return processed
+
+    if audio_array.ndim == 1:
+        return np.clip(_apply_shelves(audio_array), -1.0, 1.0)
+
+    processed_channels = []
+    for idx in range(audio_array.shape[0]):
+        processed_channels.append(_apply_shelves(audio_array[idx]))
+    return np.clip(np.vstack(processed_channels), -1.0, 1.0)
+
+
+def change_bpm(
+    input_path,
+    output_path,
+    target_bpm,
+    *,
+    export_format="mp3",
+    normalize_audio=False,
+    reduce_noise=False,
+    bass_gain_db=0.0,
+    treble_gain_db=0.0,
+    progress_callback=None,
+):
 
     audio = AudioSegment.from_file(input_path)
     sr = audio.frame_rate
     samples = np.frombuffer(audio.raw_data, dtype=np.int16).astype(np.float32)
-    if audio.channels == 2:
-        samples = np.array(samples.reshape((-1, 2)).T)
-    y = samples / 32768.0
-    original_bpm, _ = librosa.beat.beat_track(y=y, sr=sr, units='frames', hop_length=512, tightness=100, start_bpm=120, trim=False, sparse=False)
+    if audio.channels > 1:
+        samples = samples.reshape((-1, audio.channels))
+        samples = samples.T
+        y = samples / 32768.0
+        y_mono = y.mean(axis=0)
+    else:
+        y = samples / 32768.0
+        y_mono = y
+
+    original_bpm, _ = librosa.beat.beat_track(
+        y=y_mono,
+        sr=sr,
+        units="frames",
+        hop_length=512,
+        tightness=100,
+        start_bpm=120,
+        trim=False,
+        sparse=False,
+    )
     if isinstance(original_bpm, (np.ndarray, list)):
         original_bpm = float(np.array(original_bpm).flatten()[0])
     else:
         original_bpm = float(original_bpm)
-    if progress_callback: progress_callback(20)
+    if progress_callback:
+        progress_callback(20)
 
     rate = target_bpm / original_bpm
-    # Stretch each channel separately if stereo, then normalize output
     if y.ndim == 2:
-        y_stretched = np.array([
-            librosa.effects.time_stretch(y[i], rate=rate)
-            for i in range(y.shape[0])
-        ])
+        stretched_channels = []
+        for idx in range(y.shape[0]):
+            stretched_channels.append(librosa.effects.time_stretch(y[idx], rate=rate))
+        y_stretched = np.array(stretched_channels)
     else:
         y_stretched = librosa.effects.time_stretch(y, rate=rate)
-    y_stretched = y_stretched * 0.95
-    if progress_callback: progress_callback(50)
+    if progress_callback:
+        progress_callback(45)
 
-    # Konvertiere gestretchte Audiodaten in int16
+    if reduce_noise:
+        try:
+            if y_stretched.ndim == 1:
+                y_stretched = nr.reduce_noise(y=y_stretched, sr=sr)
+            else:
+                denoised = []
+                for idx in range(y_stretched.shape[0]):
+                    denoised.append(nr.reduce_noise(y=y_stretched[idx], sr=sr))
+                y_stretched = np.array(denoised)
+        except Exception as exc:
+            print(f"Warnung: Rauschreduzierung fehlgeschlagen ({exc})")
+        if progress_callback:
+            progress_callback(60)
+    else:
+        if progress_callback:
+            progress_callback(55)
+
+    y_stretched = apply_tone_controls(y_stretched, sr, bass_gain_db, treble_gain_db)
+
     y_stretched = np.clip(y_stretched, -1.0, 1.0)
+    if progress_callback:
+        progress_callback(75)
+
     if y_stretched.ndim == 1:
         pcm = (y_stretched * 32767).astype(np.int16)
         audio_out = AudioSegment(
             pcm.tobytes(),
             frame_rate=sr,
             sample_width=2,
-            channels=1
+            channels=1,
         )
     else:
         pcm = (y_stretched * 32767).astype(np.int16).T.flatten()
@@ -98,15 +185,19 @@ def change_bpm(input_path, output_path, target_bpm, progress_callback=None):
             pcm.tobytes(),
             frame_rate=sr,
             sample_width=2,
-            channels=y_stretched.shape[0]
+            channels=y_stretched.shape[0],
         )
-    louder = audio_out.apply_gain(6)
-    louder.export(output_path, format="mp3", bitrate="320k")
-    output_size = os.path.getsize(output_path) / (1024 * 1024)
-    if progress_callback:
-        progress_callback(95)
 
-    if progress_callback: progress_callback(100)
+    if normalize_audio:
+        audio_out = effects.normalize(audio_out)
+
+    export_kwargs = {"format": export_format}
+    if export_format == "mp3":
+        export_kwargs["bitrate"] = "320k"
+    audio_out.export(output_path, **export_kwargs)
+
+    if progress_callback:
+        progress_callback(100)
     return original_bpm
 
 class BPMChangerApp:
@@ -149,16 +240,71 @@ class BPMChangerApp:
         self.bpm_entry = tk.Entry(master)
         self.bpm_entry.pack()
 
-        tk.Label(master, text="3. Konvertieren:").pack(pady=10)
+        tk.Label(master, text="3. Audio-Optionen:").pack(pady=10)
+
+        format_frame = tk.Frame(master)
+        format_frame.pack()
+        tk.Label(format_frame, text="Ausgabeformat:").pack(side="left", padx=5)
+        self.format_var = tk.StringVar(value=list(EXPORT_FORMATS.keys())[0])
+        self.format_combobox = ttk.Combobox(
+            format_frame,
+            textvariable=self.format_var,
+            values=list(EXPORT_FORMATS.keys()),
+            state="readonly",
+            width=25,
+        )
+        self.format_combobox.pack(side="left")
+
+        self.normalize_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            master,
+            text="Lautheit normalisieren",
+            variable=self.normalize_var,
+        ).pack(anchor="w", padx=40)
+
+        self.denoise_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            master,
+            text="Rauschen reduzieren (langsamer)",
+            variable=self.denoise_var,
+        ).pack(anchor="w", padx=40)
+
+        eq_frame = tk.LabelFrame(master, text="Tonentzerrung (dB)")
+        eq_frame.pack(pady=8, padx=20, fill="x")
+        eq_frame.columnconfigure(1, weight=1)
+
+        tk.Label(eq_frame, text="Bass:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        self.bass_var = tk.DoubleVar(value=0.0)
+        tk.Scale(
+            eq_frame,
+            from_=-6,
+            to=6,
+            orient="horizontal",
+            resolution=1,
+            variable=self.bass_var,
+        ).grid(row=0, column=1, sticky="ew", padx=5)
+
+        tk.Label(eq_frame, text="Höhen:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        self.treble_var = tk.DoubleVar(value=0.0)
+        tk.Scale(
+            eq_frame,
+            from_=-6,
+            to=6,
+            orient="horizontal",
+            resolution=1,
+            variable=self.treble_var,
+        ).grid(row=1, column=1, sticky="ew", padx=5)
+
+        tk.Label(master, text="4. Konvertieren:").pack(pady=10)
         tk.Button(master, text="Start", command=self.run_conversion).pack()
 
-        tk.Label(master, text="4. Speicherort (optional):").pack(pady=5)
+        tk.Label(master, text="5. Speicherort (optional):").pack(pady=5)
         self.save_dir = tk.StringVar(value="")
         self.save_entry = tk.Entry(master, textvariable=self.save_dir, width=40)
         self.save_entry.pack()
         tk.Button(master, text="Ordner wählen", command=self.select_save_folder).pack(pady=2)
 
-        tk.Label(master, text="Dateiname (ohne .mp3):").pack(pady=5)
+        tk.Label(master, text="Dateiname (ohne Dateiendung):").pack(pady=5)
         self.filename_override = tk.StringVar()
         self.filename_entry = tk.Entry(master, textvariable=self.filename_override, width=40)
         self.filename_entry.pack()
@@ -231,14 +377,31 @@ class BPMChangerApp:
         def task():
             start_time = time.time()
             try:
+                selected_format = EXPORT_FORMATS.get(
+                    self.format_var.get(),
+                    EXPORT_FORMATS[list(EXPORT_FORMATS.keys())[0]],
+                )
+                extension = selected_format["extension"]
                 if self.filename_override.get().strip():
-                    base_name = self.filename_override.get().strip() + ".mp3"
+                    base_name = self.filename_override.get().strip() + extension
                 else:
-                    base_name = os.path.basename(os.path.splitext(self.file_path)[0]) + f"_{int(target_bpm)}bpm.mp3"
+                    base_name = (
+                        os.path.basename(os.path.splitext(self.file_path)[0])
+                        + f"_{int(target_bpm)}bpm{extension}"
+                    )
                 target_dir = self.save_dir.get() if self.save_dir.get() else os.path.dirname(self.file_path)
                 output_path = os.path.join(target_dir, base_name)
-                original_size = os.path.getsize(self.file_path) / (1024 * 1024)
-                original_bpm = change_bpm(self.file_path, output_path, target_bpm, self.update_progress)
+                original_bpm = change_bpm(
+                    self.file_path,
+                    output_path,
+                    target_bpm,
+                    export_format=selected_format["format"],
+                    normalize_audio=self.normalize_var.get(),
+                    reduce_noise=self.denoise_var.get(),
+                    bass_gain_db=self.bass_var.get(),
+                    treble_gain_db=self.treble_var.get(),
+                    progress_callback=self.update_progress,
+                )
                 output_size = os.path.getsize(output_path) / (1024 * 1024)
                 duration = time.time() - start_time
 

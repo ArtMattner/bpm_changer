@@ -4,3 +4,5 @@ numpy
 soundfile
 tk
 pillow
+noisereduce
+scipy
