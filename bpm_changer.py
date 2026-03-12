@@ -1,185 +1,284 @@
-import librosa
-import soundfile as sf
-from pydub import AudioSegment
 import os
-import threading
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
-import time
-from tempfile import NamedTemporaryFile
-import numpy as np
-from PIL import Image, ImageTk
+import platform
 import shutil
 import sys
-import platform
+import threading
+import time
+from dataclasses import dataclass
 
-# Prüfe ffmpeg/ffprobe-Abhängigkeiten
+import librosa
+import numpy as np
+import tkinter as tk
+from pydub import AudioSegment
+from tkinter import filedialog, messagebox, ttk
+
+
+SUPPORTED_INPUT_EXTENSIONS = (
+    "*.mp3", "*.wav", "*.flac", "*.ogg", "*.m4a", "*.aac", "*.wma", "*.aiff", "*.aif", "*.opus"
+)
+
+EXPORT_FORMATS = {
+    "MP3 (.mp3)": {"ext": ".mp3", "format": "mp3", "codec": None, "bitrate": "320k"},
+    "WAV (.wav)": {"ext": ".wav", "format": "wav", "codec": None, "bitrate": None},
+    "FLAC (.flac)": {"ext": ".flac", "format": "flac", "codec": None, "bitrate": None},
+    "OGG Vorbis (.ogg)": {"ext": ".ogg", "format": "ogg", "codec": "libvorbis", "bitrate": "256k"},
+    "AAC (.m4a)": {"ext": ".m4a", "format": "ipod", "codec": "aac", "bitrate": "256k"},
+}
+
+
+@dataclass
+class AudioMeta:
+    sample_rate: int
+    channels: int
+    duration_s: float
+    size_mb: float
+    estimated_bpm: float
+
+
 def check_ffmpeg_dependencies():
-    system = platform.system()
-    if system == "Windows":
-        ffmpeg_exe = "ffmpeg.exe"
-        ffprobe_exe = "ffprobe.exe"
-    else:
-        ffmpeg_exe = "ffmpeg"
-        ffprobe_exe = "ffprobe"
+    ffmpeg_exe = "ffmpeg.exe" if platform.system() == "Windows" else "ffmpeg"
+    ffprobe_exe = "ffprobe.exe" if platform.system() == "Windows" else "ffprobe"
 
     ffmpeg_path = shutil.which(ffmpeg_exe)
     ffprobe_path = shutil.which(ffprobe_exe)
 
-    log_path = os.path.join(os.getcwd(), "bpm_changer_log.txt")
-    try:
-        with open(log_path, "a") as f:
-            f.write(f"ffmpeg path: {ffmpeg_path}\n")
-            f.write(f"ffprobe path: {ffprobe_path}\n")
-    except Exception as e:
-        print(f"Fehler beim Schreiben des Logs: {e}")
-
     if not ffmpeg_path or not ffprobe_path:
-        message = (
-            f"Fehler: {ffmpeg_exe} und/oder {ffprobe_exe} sind nicht installiert oder nicht im PATH verfügbar.\n\n"
-            "Bitte installiere ffmpeg und stelle sicher, dass die Befehle im Systempfad verfügbar sind."
+        messagebox.showerror(
+            "Fehlende Abhängigkeit",
+            f"{ffmpeg_exe} und/oder {ffprobe_exe} wurden nicht gefunden.\n"
+            "Bitte ffmpeg installieren und in den PATH aufnehmen.",
         )
-        messagebox.showerror("Abhängigkeit fehlt", message)
         sys.exit(1)
 
 
-# Logging function for environment info
-def log_environment_info():
-    try:
-        log_path = os.path.join(os.getcwd(), "bpm_changer_log.txt")
-        with open(log_path, "w") as f:
-            f.write(f"Executable path: {sys.executable}\n")
-            f.write(f"__file__: {__file__}\n")
-            f.write(f"Current working directory: {os.getcwd()}\n")
-            f.write(f"sys._MEIPASS: {getattr(sys, '_MEIPASS', 'Not set')}\n")
-    except Exception as e:
-        print(f"Fehler beim Schreiben des Logs: {e}")
+def _segment_to_float_array(audio: AudioSegment) -> np.ndarray:
+    sample_width = audio.sample_width
+    if sample_width == 1:
+        dtype = np.int8
+        scale = 128.0
+    elif sample_width == 2:
+        dtype = np.int16
+        scale = 32768.0
+    elif sample_width == 4:
+        dtype = np.int32
+        scale = 2147483648.0
+    else:
+        audio = audio.set_sample_width(2)
+        dtype = np.int16
+        scale = 32768.0
 
-def change_bpm(input_path, output_path, target_bpm, progress_callback=None):
+    samples = np.frombuffer(audio.raw_data, dtype=dtype).astype(np.float32)
+    if audio.channels > 1:
+        samples = samples.reshape((-1, audio.channels)).T
+    return samples / scale
 
+
+def _float_array_to_segment(y: np.ndarray, sr: int) -> AudioSegment:
+    y = np.clip(y, -1.0, 1.0)
+    peak = np.max(np.abs(y))
+    if peak > 0:
+        y = y * (0.89 / peak)
+
+    pcm = (y * 32767).astype(np.int16)
+    if y.ndim == 1:
+        raw = pcm.tobytes()
+        channels = 1
+    else:
+        raw = pcm.T.flatten().tobytes()
+        channels = y.shape[0]
+
+    return AudioSegment(data=raw, sample_width=2, frame_rate=sr, channels=channels)
+
+
+def estimate_bpm(y: np.ndarray, sr: int) -> float:
+    mono = y.mean(axis=0) if y.ndim == 2 else y
+    if len(mono) < 4096:
+        raise ValueError("Audio ist zu kurz für BPM-Erkennung.")
+
+    candidates = []
+    configs = [(512, 90), (512, 120), (1024, 120), (1024, 140)]
+    for hop_length, start_bpm in configs:
+        bpm, _ = librosa.beat.beat_track(y=mono, sr=sr, hop_length=hop_length, start_bpm=start_bpm)
+        value = float(bpm.item() if hasattr(bpm, "item") else bpm)
+        if 40 <= value <= 260:
+            candidates.append(value)
+
+    if not candidates:
+        raise ValueError("BPM konnte nicht robust geschätzt werden.")
+
+    bpm = float(np.median(candidates))
+    if bpm < 60:
+        bpm *= 2
+    elif bpm > 200:
+        bpm /= 2
+    return bpm
+
+
+def change_bpm(input_path: str, output_path: str, target_bpm: float, export_profile: dict, progress_callback=None) -> float:
     audio = AudioSegment.from_file(input_path)
     sr = audio.frame_rate
-    samples = np.frombuffer(audio.raw_data, dtype=np.int16).astype(np.float32)
-    if audio.channels == 2:
-        samples = np.array(samples.reshape((-1, 2)).T)
-    y = samples / 32768.0
-    original_bpm, _ = librosa.beat.beat_track(y=y, sr=sr, units='frames', hop_length=512, tightness=100, start_bpm=120, trim=False, sparse=False)
-    if isinstance(original_bpm, (np.ndarray, list)):
-        original_bpm = float(np.array(original_bpm).flatten()[0])
-    else:
-        original_bpm = float(original_bpm)
-    if progress_callback: progress_callback(20)
+    y = _segment_to_float_array(audio)
+
+    original_bpm = estimate_bpm(y, sr)
+    if progress_callback:
+        progress_callback(25)
 
     rate = target_bpm / original_bpm
-    # Stretch each channel separately if stereo, then normalize output
+    if rate <= 0:
+        raise ValueError("Ungültige Ziel-BPM.")
+
     if y.ndim == 2:
-        y_stretched = np.array([
-            librosa.effects.time_stretch(y[i], rate=rate)
-            for i in range(y.shape[0])
-        ])
+        stretched = np.array([librosa.effects.time_stretch(y=channel, rate=rate) for channel in y])
     else:
-        y_stretched = librosa.effects.time_stretch(y, rate=rate)
-    y_stretched = y_stretched * 0.95
-    if progress_callback: progress_callback(50)
+        stretched = librosa.effects.time_stretch(y=y, rate=rate)
 
-    # Konvertiere gestretchte Audiodaten in int16
-    y_stretched = np.clip(y_stretched, -1.0, 1.0)
-    if y_stretched.ndim == 1:
-        pcm = (y_stretched * 32767).astype(np.int16)
-        audio_out = AudioSegment(
-            pcm.tobytes(),
-            frame_rate=sr,
-            sample_width=2,
-            channels=1
-        )
-    else:
-        pcm = (y_stretched * 32767).astype(np.int16).T.flatten()
-        audio_out = AudioSegment(
-            pcm.tobytes(),
-            frame_rate=sr,
-            sample_width=2,
-            channels=y_stretched.shape[0]
-        )
-    louder = audio_out.apply_gain(6)
-    louder.export(output_path, format="mp3", bitrate="320k")
-    output_size = os.path.getsize(output_path) / (1024 * 1024)
     if progress_callback:
-        progress_callback(95)
+        progress_callback(70)
 
-    if progress_callback: progress_callback(100)
+    out_segment = _float_array_to_segment(stretched, sr)
+
+    export_kwargs = {"format": export_profile["format"]}
+    if export_profile["codec"]:
+        export_kwargs["codec"] = export_profile["codec"]
+    if export_profile["bitrate"]:
+        export_kwargs["bitrate"] = export_profile["bitrate"]
+
+    out_segment.export(output_path, **export_kwargs)
+
+    if progress_callback:
+        progress_callback(100)
+
     return original_bpm
+
+
+def analyze_audio(path: str) -> AudioMeta:
+    audio = AudioSegment.from_file(path)
+    y = _segment_to_float_array(audio)
+    bpm = estimate_bpm(y, audio.frame_rate)
+    return AudioMeta(
+        sample_rate=audio.frame_rate,
+        channels=audio.channels,
+        duration_s=len(audio) / 1000.0,
+        size_mb=os.path.getsize(path) / (1024 * 1024),
+        estimated_bpm=bpm,
+    )
+
 
 class BPMChangerApp:
     def __init__(self, master):
         self.master = master
-        self.master.configure(bg='black')
-        # Load background image relative to script location, works on Windows and others
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.bg_image_path = os.path.join(base_dir, "assets", "A_vibrant_digital_illustration_in_a_futuristic_spa.png")
-        try:
-            self.original_bg_image = Image.open(self.bg_image_path)
-            original_width, original_height = self.original_bg_image.size
-            max_width, max_height = 720, 680
-            scale_w = max_width / original_width
-            scale_h = max_height / original_height
-            scale = min(scale_w, scale_h, 1.0)
-            scaled_width = int(original_width * scale)
-            scaled_height = int(original_height * scale)
-            self.bg_photo = ImageTk.PhotoImage(self.original_bg_image.resize((scaled_width, scaled_height), Image.LANCZOS))
-            master.geometry(f"{scaled_width}x{scaled_height}")
-            master.minsize(scaled_width, scaled_height)
-            self.bg_label = tk.Label(master, image=self.bg_photo)
-            self.bg_label.place(x=0, y=0, relwidth=1, relheight=1)
-        except Exception as e:
-            print(f"Fehler beim Laden des Hintergrundbilds: {e}")
-        master.title("Captain's BPM Changer")
-        master.resizable(True, True)
-
+        self.master.title("BPM Changer Pro")
+        self.master.geometry("860x620")
+        self.master.minsize(820, 580)
         self.file_path = None
 
-        tk.Label(master, text="1. Wähle eine MP3-Datei:").pack(pady=5)
-        tk.Button(master, text="Datei auswählen", command=self.select_file).pack()
+        self._setup_theme()
+        self._build_ui()
 
-        self.filename_label = tk.Label(master, text="Keine Datei ausgewählt", fg="gray")
-        self.filename_label.pack()
-        self.fileinfo_label = tk.Label(master, text="", fg="gray")
-        self.fileinfo_label.pack()
+    def _setup_theme(self):
+        style = ttk.Style(self.master)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
 
-        tk.Label(master, text="2. Ziel-BPM eingeben:").pack(pady=10)
-        self.bpm_entry = tk.Entry(master)
-        self.bpm_entry.pack()
+        style.configure("App.TFrame", background="#151922")
+        style.configure("Card.TFrame", background="#1e2430")
+        style.configure("Title.TLabel", background="#151922", foreground="#f3f7ff", font=("Segoe UI", 20, "bold"))
+        style.configure("Sub.TLabel", background="#151922", foreground="#a8b2c6", font=("Segoe UI", 10))
+        style.configure("CardTitle.TLabel", background="#1e2430", foreground="#f3f7ff", font=("Segoe UI", 11, "bold"))
+        style.configure("CardText.TLabel", background="#1e2430", foreground="#d5dceb", font=("Segoe UI", 10))
+        style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"))
 
-        tk.Label(master, text="3. Konvertieren:").pack(pady=10)
-        tk.Button(master, text="Start", command=self.run_conversion).pack()
+        self.master.configure(bg="#151922")
 
-        tk.Label(master, text="4. Speicherort (optional):").pack(pady=5)
+    def _build_ui(self):
+        root = ttk.Frame(self.master, style="App.TFrame", padding=16)
+        root.pack(fill="both", expand=True)
+
+        ttk.Label(root, text="BPM Changer Pro", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(root, text="Konvertiere Audio in Ziel-BPM – mit Multi-Format Import/Export.", style="Sub.TLabel").pack(anchor="w", pady=(0, 14))
+
+        content = ttk.Frame(root, style="App.TFrame")
+        content.pack(fill="both", expand=True)
+        content.columnconfigure(0, weight=1)
+        content.columnconfigure(1, weight=1)
+
+        left = ttk.Frame(content, style="Card.TFrame", padding=14)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+
+        right = ttk.Frame(content, style="Card.TFrame", padding=14)
+        right.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+
+        content.rowconfigure(0, weight=1)
+
+        # Input card
+        ttk.Label(left, text="1) Input", style="CardTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ttk.Button(left, text="Audio auswählen", style="Accent.TButton", command=self.select_file).grid(row=1, column=0, sticky="w")
+
+        self.filename_label = ttk.Label(left, text="Keine Datei ausgewählt", style="CardText.TLabel")
+        self.filename_label.grid(row=2, column=0, sticky="w", pady=(10, 4))
+
+        self.fileinfo_label = ttk.Label(left, text="", style="CardText.TLabel")
+        self.fileinfo_label.grid(row=3, column=0, sticky="w")
+
+        # Conversion card
+        ttk.Label(left, text="2) Konvertierung", style="CardTitle.TLabel").grid(row=4, column=0, sticky="w", pady=(20, 10))
+
+        ttk.Label(left, text="Ziel-BPM", style="CardText.TLabel").grid(row=5, column=0, sticky="w")
+        self.bpm_entry = ttk.Entry(left)
+        self.bpm_entry.insert(0, "128")
+        self.bpm_entry.grid(row=6, column=0, sticky="ew", pady=(4, 10))
+
+        ttk.Label(left, text="Export-Format", style="CardText.TLabel").grid(row=7, column=0, sticky="w")
+        self.export_format = tk.StringVar(value=list(EXPORT_FORMATS.keys())[0])
+        self.export_combo = ttk.Combobox(
+            left,
+            textvariable=self.export_format,
+            values=list(EXPORT_FORMATS.keys()),
+            state="readonly",
+        )
+        self.export_combo.grid(row=8, column=0, sticky="ew", pady=(4, 10))
+
+        ttk.Label(left, text="Dateiname (optional)", style="CardText.TLabel").grid(row=9, column=0, sticky="w")
+        self.filename_override = ttk.Entry(left)
+        self.filename_override.grid(row=10, column=0, sticky="ew", pady=(4, 14))
+
+        ttk.Button(left, text="Konvertierung starten", style="Accent.TButton", command=self.run_conversion).grid(row=11, column=0, sticky="ew")
+
+        left.columnconfigure(0, weight=1)
+
+        # Output card
+        ttk.Label(right, text="3) Ausgabe", style="CardTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        ttk.Label(right, text="Zielordner", style="CardText.TLabel").grid(row=1, column=0, sticky="w")
+        path_row = ttk.Frame(right, style="Card.TFrame")
+        path_row.grid(row=2, column=0, sticky="ew", pady=(4, 14))
+        path_row.columnconfigure(0, weight=1)
+
         self.save_dir = tk.StringVar(value="")
-        self.save_entry = tk.Entry(master, textvariable=self.save_dir, width=40)
-        self.save_entry.pack()
-        tk.Button(master, text="Ordner wählen", command=self.select_save_folder).pack(pady=2)
+        ttk.Entry(path_row, textvariable=self.save_dir).grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        ttk.Button(path_row, text="Ordner", command=self.select_save_folder).grid(row=0, column=1)
 
-        tk.Label(master, text="Dateiname (ohne .mp3):").pack(pady=5)
-        self.filename_override = tk.StringVar()
-        self.filename_entry = tk.Entry(master, textvariable=self.filename_override, width=40)
-        self.filename_entry.pack()
+        self.progress = ttk.Progressbar(right, orient="horizontal", mode="determinate", length=350)
+        self.progress.grid(row=3, column=0, sticky="ew")
 
-        frame = tk.Frame(master)
-        frame.pack(pady=15)
-        self.progress = ttk.Progressbar(frame, orient="horizontal", length=300, mode="determinate")
-        self.progress.pack(side="left")
-        self.percent_label = tk.Label(frame, text="0%")
-        self.percent_label.pack(side="left", padx=10)
+        self.percent_label = ttk.Label(right, text="0%", style="CardText.TLabel")
+        self.percent_label.grid(row=4, column=0, sticky="w", pady=(6, 12))
 
-        self.status_label = tk.Label(master, text="Status: Bereit", fg="blue")
-        self.status_label.pack()
+        self.status_label = ttk.Label(right, text="Status: Bereit", style="CardText.TLabel")
+        self.status_label.grid(row=5, column=0, sticky="w")
 
-        self.outputinfo_label = tk.Label(master, text="", fg="gray")
-        self.outputinfo_label.pack()
+        self.outputinfo_label = ttk.Label(right, text="", style="CardText.TLabel")
+        self.outputinfo_label.grid(row=6, column=0, sticky="w", pady=(10, 0))
 
-        # self.fileinfo_label is now packed above, directly after filename_label
+        ttk.Label(
+            right,
+            text="Unterstützte Inputs: MP3, WAV, FLAC, OGG, M4A, AAC, WMA, AIFF, OPUS",
+            style="Sub.TLabel",
+        ).grid(row=7, column=0, sticky="w", pady=(24, 0))
 
-        for widget in master.winfo_children():
-            widget.lift()
+        right.columnconfigure(0, weight=1)
 
     def select_save_folder(self):
         folder = filedialog.askdirectory()
@@ -187,83 +286,98 @@ class BPMChangerApp:
             self.save_dir.set(folder)
 
     def select_file(self):
+        filetypes = [("Audio Dateien", " ".join(SUPPORTED_INPUT_EXTENSIONS)), ("Alle Dateien", "*.*")]
+        path = filedialog.askopenfilename(filetypes=filetypes)
+        if not path:
+            return
 
-        self.file_path = filedialog.askopenfilename(filetypes=[("MP3 Dateien", "*.mp3")])
-        if self.file_path:
-            self.filename_label.config(text=os.path.basename(self.file_path))
-            try:
-                audio = AudioSegment.from_file(self.file_path)
-                sr = audio.frame_rate
-                samples = np.frombuffer(audio.raw_data, dtype=np.int16).astype(np.float32)
-                if audio.channels == 2:
-                    samples = samples.reshape((-1, 2))
-                    samples = samples.mean(axis=1)
-                y = samples / 32768.0
-                if y is None or len(y) < 2048:
-                    raise ValueError("Audio zu kurz oder leer.")
-                bpm, _ = librosa.beat.beat_track(y=y, sr=sr)
-                bpm = float(bpm.item() if hasattr(bpm, "item") else bpm)
-                size = os.path.getsize(self.file_path) / (1024 * 1024)
-                self.fileinfo_label.config(text=f"BPM: {bpm:.2f}, Größe: {size:.2f} MB")
-                self.status_label.config(text="Status: BPM erkannt", fg="green")
-                if not self.filename_override.get().strip():
-                    default_name = os.path.splitext(os.path.basename(self.file_path))[0] + "_BPM-CHANGER"
-                    self.filename_override.set(default_name)
-            except Exception as e:
-                self.fileinfo_label.config(text="Fehler beim BPM-Auslesen!", fg="red")
-                self.status_label.config(text="Status: Fehler beim Erkennen", fg="red")
-                messagebox.showerror("Fehler", f"BPM konnte nicht erkannt werden:\n{str(e)}")
+        self.file_path = path
+        self.filename_label.config(text=os.path.basename(path))
+
+        try:
+            meta = analyze_audio(path)
+            self.fileinfo_label.config(
+                text=(
+                    f"{meta.estimated_bpm:.2f} BPM | {meta.duration_s:.1f}s | "
+                    f"{meta.sample_rate} Hz | {meta.channels} Kanal/Kanäle | {meta.size_mb:.2f} MB"
+                )
+            )
+            self.status_label.config(text="Status: Audio erfolgreich analysiert")
+            if not self.filename_override.get().strip():
+                base = os.path.splitext(os.path.basename(path))[0]
+                self.filename_override.delete(0, tk.END)
+                self.filename_override.insert(0, f"{base}_BPM-CHANGER")
+        except Exception as exc:
+            self.fileinfo_label.config(text="Fehler bei der Audioanalyse")
+            self.status_label.config(text="Status: Analyse fehlgeschlagen")
+            messagebox.showerror("Fehler", f"Datei konnte nicht gelesen werden:\n{exc}")
+
+    def _set_progress(self, value: int):
+        self.progress["value"] = value
+        self.percent_label.config(text=f"{int(value)}%")
+        self.master.update_idletasks()
 
     def run_conversion(self):
         if not self.file_path:
-            messagebox.showerror("Fehler", "Bitte wähle eine MP3-Datei aus.")
+            messagebox.showerror("Fehler", "Bitte zuerst eine Audio-Datei auswählen.")
             return
 
         try:
             target_bpm = float(self.bpm_entry.get())
+            if target_bpm <= 0:
+                raise ValueError
         except ValueError:
-            messagebox.showerror("Fehler", "Bitte gib eine gültige BPM-Zahl ein.")
+            messagebox.showerror("Fehler", "Bitte eine gültige Ziel-BPM eingeben (> 0).")
             return
 
-        self.progress["value"] = 0
-        self.status_label.config(text="Status: Verarbeitung läuft...", fg="darkorange")
+        selected_profile = EXPORT_FORMATS[self.export_format.get()]
 
-        def task():
-            start_time = time.time()
+        target_dir = self.save_dir.get().strip() or os.path.dirname(self.file_path)
+        os.makedirs(target_dir, exist_ok=True)
+
+        base_name = self.filename_override.get().strip() or os.path.splitext(os.path.basename(self.file_path))[0]
+        if base_name.lower().endswith(selected_profile["ext"]):
+            final_name = base_name
+        else:
+            final_name = f"{base_name}{selected_profile['ext']}"
+
+        output_path = os.path.join(target_dir, final_name)
+
+        self._set_progress(0)
+        self.status_label.config(text="Status: Verarbeitung läuft …")
+        self.outputinfo_label.config(text="")
+
+        def worker():
+            start = time.time()
             try:
-                if self.filename_override.get().strip():
-                    base_name = self.filename_override.get().strip() + ".mp3"
-                else:
-                    base_name = os.path.basename(os.path.splitext(self.file_path)[0]) + f"_{int(target_bpm)}bpm.mp3"
-                target_dir = self.save_dir.get() if self.save_dir.get() else os.path.dirname(self.file_path)
-                output_path = os.path.join(target_dir, base_name)
-                original_size = os.path.getsize(self.file_path) / (1024 * 1024)
-                original_bpm = change_bpm(self.file_path, output_path, target_bpm, self.update_progress)
-                output_size = os.path.getsize(output_path) / (1024 * 1024)
-                duration = time.time() - start_time
-
-                self.status_label.config(
-                    text=f"Fertig in {duration:.1f}s", fg="green"
+                original_bpm = change_bpm(
+                    input_path=self.file_path,
+                    output_path=output_path,
+                    target_bpm=target_bpm,
+                    export_profile=selected_profile,
+                    progress_callback=lambda p: self.master.after(0, self._set_progress, p),
                 )
-                self.outputinfo_label.config(
-                    text=f"{os.path.basename(output_path)} ({output_size:.2f} MB)"
+                duration = time.time() - start
+                size_mb = os.path.getsize(output_path) / (1024 * 1024)
+
+                self.master.after(0, lambda: self.status_label.config(text=f"Status: Fertig in {duration:.1f}s"))
+                self.master.after(0, lambda: self.outputinfo_label.config(text=f"{os.path.basename(output_path)} | {size_mb:.2f} MB"))
+                self.master.after(
+                    0,
+                    lambda: messagebox.showinfo(
+                        "Erfolg",
+                        f"Original BPM: {original_bpm:.2f}\nZiel BPM: {target_bpm:.2f}\nGespeichert unter:\n{output_path}",
+                    ),
                 )
-                messagebox.showinfo("Fertig", f"Original BPM: {original_bpm:.2f}\nGröße: {output_size:.2f} MB\nGespeichert als:\n{output_path}")
-            except Exception as e:
-                self.status_label.config(text="Fehler beim Verarbeiten!", fg="red")
-                messagebox.showerror("Fehler", f"{str(e)}")
+            except Exception as exc:
+                self.master.after(0, lambda: self.status_label.config(text="Status: Fehler bei Verarbeitung"))
+                self.master.after(0, lambda: messagebox.showerror("Fehler", str(exc)))
 
-        threading.Thread(target=task).start()
+        threading.Thread(target=worker, daemon=True).start()
 
-    def update_progress(self, percent):
-        self.progress["value"] = percent
-        self.percent_label.config(text=f"{int(percent)}%")
-        self.master.update_idletasks()
-        
 
 if __name__ == "__main__":
     check_ffmpeg_dependencies()
-    log_environment_info()
     root = tk.Tk()
     app = BPMChangerApp(root)
     root.mainloop()
